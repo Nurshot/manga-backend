@@ -38,7 +38,16 @@ class MangaBase(SQLModel):
     author: str
     description: Optional[str] = None
     cover_image: Optional[str] = None
-    read_count: int = Field(default=0) 
+    read_count: int = Field(default=0)
+    artist: Optional[str] = None
+    language: Optional[str] = None
+    genre: Optional[str] = None
+    status: Optional[str] = None
+    publisher: Optional[str] = None
+    year: Optional[int] = None
+    rating: Optional[float] = None
+
+
 
 class Manga(MangaBase, table=True):
     id: int = Field(default=None, primary_key=True)

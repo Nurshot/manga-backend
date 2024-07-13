@@ -105,6 +105,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 
+
+
 @app.get("/users/me", response_model=UserRead)
 async def read_users_me(token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)):
     credentials_exception = HTTPException(
