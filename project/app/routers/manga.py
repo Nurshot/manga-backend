@@ -6,15 +6,20 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_session
 from typing import List, Optional
-from ..models import Manga, MangaCreate, MangaRead, MangaUpdate, MangaCategoryLink,Chapter,ChapterRead,ChapterUpdate,ChapterReadWithImages,ChapterReadWithoutImages,ChapterUpdatewithImages
+from ..models import Manga, MangaCreate, MangaRead, MangaUpdate, MangaCategoryLink,Chapter,ChapterRead,ChapterUpdate,ChapterReadWithImages,ChapterReadWithoutImages,ChapterUpdatewithImages,ChapterReadWithoutImagesStr
 import zipfile
 import io
 import base64
 import json
 import re
 from fastapi.responses import JSONResponse
+from PIL import Image
+import paramiko
+import os
+from natsort import natsorted
 
 
+from ftplib import FTP
 
 router = APIRouter()
 
@@ -81,6 +86,16 @@ async def read_manga(manga_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Manga not found")
     return manga
 
+@router.get("/mangasl/{manga_slug}", response_model=MangaRead)
+async def read_manga(manga_slug: str, session: Session = Depends(get_session)):
+    query = select(Manga).where(Manga.slug == manga_slug).options(selectinload(Manga.categories))
+    result = await session.execute(query)
+    manga = result.scalar_one_or_none()
+    if not manga:
+        raise HTTPException(status_code=404, detail="Manga not found")
+    return manga
+
+
 @router.put("/manga/{manga_id}")
 async def update_mangaa(manga_id: int, update_request: MangaUpdate, session: Session = Depends(get_session)):
     
@@ -101,6 +116,14 @@ async def update_mangaa(manga_id: int, update_request: MangaUpdate, session: Ses
     db_manga.author = update_request.author
     db_manga.description = update_request.description
     db_manga.cover_image = update_request.cover_image
+    db_manga.artist = update_request.artist
+    db_manga.language = update_request.language
+    db_manga.genre = update_request.genre
+    db_manga.status = update_request.status
+    db_manga.publisher = update_request.publisher
+    db_manga.rating = update_request.rating
+    db_manga.year = update_request.year
+    db_manga.slug = update_request.slug
     
 
     session.add(db_manga)
@@ -136,18 +159,42 @@ async def update_mangaa(manga_id: int, update_request: MangaUpdate, session: Ses
 
 
 
-
-
 @router.delete("/manga/{manga_id}")
 async def delete_manga(manga_id: int, session: Session = Depends(get_session)):
     async with session.begin():
         db_manga = await session.get(Manga, manga_id)
         if not db_manga:
             raise HTTPException(status_code=404, detail="Manga not found")
+        
+        # Önce ilgili Chapter kayıtlarını silin
+        chapters = await session.execute(select(Chapter).where(Chapter.manga_id == manga_id))
+        for chapter in chapters.scalars().all():
+            await session.delete(chapter)
+        
+        # Sonra Manga kaydını silin
         await session.delete(db_manga)
     
     await session.commit()
     return {"ok": True}
+
+
+def upload_to_sftp(local_path, remote_path, sftp):
+    try:
+        sftp.put(local_path, remote_path)
+    except Exception as e:
+        print(f"Could not upload {local_path} to {remote_path}: {e}")
+        raise
+
+def sftp_mkdir_recursive(sftp, path):
+    dirs = path.split("/")
+    current_path = ""
+    for dir in dirs:
+        if dir:  # Boş stringleri atla
+            current_path = current_path + "/" + dir
+            try:
+                sftp.mkdir(current_path)
+            except IOError:
+                pass  # Dizin zaten mevcut olabilir
 
 @router.post("/manga/{manga_id}/upload_chapters")
 async def upload_chapters(manga_id: int, zip_file: UploadFile = File(...), session: Session = Depends(get_session)):
@@ -159,39 +206,94 @@ async def upload_chapters(manga_id: int, zip_file: UploadFile = File(...), sessi
     zip_bytes = await zip_file.read()
     zip_data = io.BytesIO(zip_bytes)
     with zipfile.ZipFile(zip_data, 'r') as zip_ref:
-        chapter_folders = [f for f in zip_ref.namelist() if f.endswith('/')]
+        chapter_folders = natsorted([f for f in zip_ref.namelist() if f.endswith('/')])
+
+        # SFTP bağlantısını kur
+        host = "209.38.238.11"  # SFTP sunucusunun IP adresi veya alan adı
+        port = 2222
+        username = "ftpuser"
+        password = "memlekeT12"
+        
+        transport = paramiko.Transport((host, port))
+        transport.connect(username=username, password=password)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        
         for chapter_folder in chapter_folders:
             match = re.search(r'\d+', chapter_folder)
             if not match:
                 continue
             chapter_number = int(match.group())
+
+            # Bölümün veritabanında mevcut olup olmadığını kontrol et
+            existing_chapter = await session.execute(
+                select(Chapter).filter_by(manga_id=manga_id, chapter_number=chapter_number)
+            )
+            if existing_chapter.scalars().first():
+                print(f"Chapter {chapter_number} already exists in the database.")
+                continue  # Bölüm veritabanında mevcutsa atla
+
             db_chapter = Chapter(title=f"Chapter {chapter_number}", chapter_number=chapter_number, manga_id=manga_id)
             session.add(db_chapter)
             await session.commit()
             await session.refresh(db_chapter)
 
             images = []
-            image_files = sorted(
+            image_files = natsorted(
                 [f for f in zip_ref.namelist() if f.startswith(chapter_folder) and not f.endswith('/')],
-                key=lambda x: (int(re.search(r'\d+', x).group()) if re.search(r'\d+', x) else float('inf'), x)
+                key=lambda x: x.lower()
             )
+            
+            chapter_dir = f"/upload/manga_{manga_id}/chapter_{chapter_number}"
+            sftp_mkdir_recursive(sftp, chapter_dir)  # Dizinleri tek tek oluştur
+            
             for file_name in image_files:
-                if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    image_data = zip_ref.read(file_name)
-                    image_base64 = base64.b64encode(image_data).decode('utf-8')
-                    images.append(image_base64)
-
-            db_chapter.set_images(images)
+                print(file_name)
+                image_data = zip_ref.read(file_name)
+                image = Image.open(io.BytesIO(image_data))
+                local_webp_image_path = f"/tmp/{os.path.splitext(os.path.basename(file_name))[0]}.webp"
+                image.save(local_webp_image_path, "WEBP", quality=80)  # WebP formatında kaydet
+                
+                remote_webp_image_path = f"{chapter_dir}/{os.path.splitext(os.path.basename(file_name))[0]}.webp"
+                try:
+                    upload_to_sftp(local_webp_image_path, remote_webp_image_path, sftp)
+                    image_url = f"http://209.38.238.11/cdn/manga_{manga_id}/chapter_{chapter_number}/{os.path.splitext(os.path.basename(file_name))[0]}.webp"
+                    images.append(image_url)
+                except Exception as e:
+                    print(f"Could not upload {local_webp_image_path} to {remote_webp_image_path}: {e}")
+                finally:
+                    os.remove(local_webp_image_path)  # Yerel dosyayı kaldır
+                    
+            db_chapter.set_images(images)  # Resim yollarını JSON formatında kaydet
             session.add(db_chapter)
             await session.commit()
 
+        sftp.close()
+        transport.close()
+
     return {"message": "Chapters uploaded successfully"}
+
+
 
 @router.get("/manga/{manga_id}/chapters", response_model=List[ChapterReadWithoutImages])
 async def get_chapters(manga_id: int, session: Session = Depends(get_session)):
     result = await session.execute(select(Chapter).where(Chapter.manga_id == manga_id))
     chapters = result.scalars().all()
     return chapters
+
+@router.get("/mangasl/{slug}/chapters", response_model=List[ChapterReadWithoutImagesStr])
+async def get_chapters(slug: str, session: Session = Depends(get_session)):
+
+
+    resulted = await session.execute(select(Manga).where(Manga.slug == slug))
+    db_manga = resulted.scalars().one_or_none()
+    if not db_manga:
+        raise HTTPException(status_code=404, detail="Manga not found")
+    print(db_manga)
+    result = await session.execute(select(Chapter).where(Chapter.manga_id == db_manga.id))
+    chapters = result.scalars().all()
+    return chapters
+
+
 
 
 @router.get("/manga/{manga_id}/chapter/{chapter_number}/images", response_model=ChapterReadWithImages)

@@ -43,3 +43,7 @@ watchfiles==0.22.0
 websockets==12.0
 python-jose
 bcrypt
+Pillow
+paramiko
+natsort
+aioftp

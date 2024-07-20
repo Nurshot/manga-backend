@@ -24,6 +24,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+
 app = FastAPI()
 
 # CORS Middleware: allow all origins
@@ -48,6 +49,8 @@ async def pong():
 def read_root():
     return {"Hello": "World"}
 
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
@@ -59,7 +62,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 @app.post("/register", response_model=UserRead)
-async def register(user: UserCreate, session: AsyncSession = Depends(get_session)):
+async def register(user: UserCreate, session: Session = Depends(get_session)):
+    query = select(User).where((User.username == user.username) | (User.email == user.email))
+    result = await session.execute(query)
+    existing_user = result.scalar_one_or_none()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username or email already registered")
+    
     hashed_password = hashlib.sha256(user.password.encode()).hexdigest()
     db_user = User(
         username=user.username,
@@ -74,7 +83,7 @@ async def register(user: UserCreate, session: AsyncSession = Depends(get_session
     return db_user
 
 @app.post("/token", response_model=dict)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), session: AsyncSession = Depends(get_session)):
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
     query = select(User).where(User.username == form_data.username)
     result = await session.execute(query)
     user = result.scalar_one_or_none()
@@ -91,6 +100,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
@@ -100,9 +110,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
-
-
-
 
 
 

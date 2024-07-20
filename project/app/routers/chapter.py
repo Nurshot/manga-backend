@@ -39,9 +39,10 @@ async def update_chapter(chapter_id: int, chapter: ChapterUpdate, session: Sessi
 @router.delete("/chapter/{chapter_id}")
 async def delete_chapter(chapter_id: int, session: Session = Depends(get_session)):
     db_chapter = await session.get(Chapter, chapter_id)
+    chaptered = db_chapter.scalar_one_or_none()
     if not db_chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
-    await session.delete(db_chapter)
+    await session.delete(chaptered)
     await session.commit()
     return {"ok": True}
 
