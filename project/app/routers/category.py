@@ -43,7 +43,6 @@ async def read_category(category_id: int, session: AsyncSession = Depends(get_se
             description=manga.description,
             cover_image=manga.cover_image,
             read_count=manga.read_count,
-            categories=[]  # This should be empty or properly initialized
         ) for manga in category.mangas]
     )
     

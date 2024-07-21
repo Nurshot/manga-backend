@@ -1,4 +1,4 @@
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship,UniqueConstraint
 from typing import Optional, List
 from datetime import date
 from datetime import datetime
@@ -11,7 +11,9 @@ class UserBase(SQLModel):
     is_admin: bool = False
 
 class User(UserBase, table=True):
-    id: int = Field(default=None, primary_key=True)
+    __tablename__ = "user"
+    __table_args__ = (UniqueConstraint('username', name='uq_username'), UniqueConstraint('email', name='uq_email'))
+    id: Optional[int] = Field(default=None, primary_key=True)
     hashed_password: str
 
 class UserCreate(SQLModel):
@@ -38,7 +40,17 @@ class MangaBase(SQLModel):
     author: str
     description: Optional[str] = None
     cover_image: Optional[str] = None
-    read_count: int = Field(default=0) 
+    read_count: int = Field(default=0)
+    artist: Optional[str] = None
+    language: Optional[str] = None
+    genre: Optional[str] = None
+    status: Optional[str] = None
+    publisher: Optional[str] = None
+    year: Optional[int] = None
+    rating: Optional[float] = None
+    slug: str = Field(default=None, unique=True)  # Slug field
+
+
 
 class Manga(MangaBase, table=True):
     id: int = Field(default=None, primary_key=True)
@@ -64,6 +76,15 @@ class MangaUpdate(SQLModel):
     description: Optional[str] = None
     cover_image: Optional[str] = None
     category_ids: Optional[List[int]] = None
+    artist: Optional[str] = None
+    language: Optional[str] = None
+    genre: Optional[str] = None
+    status: Optional[str] = None
+    publisher: Optional[str] = None
+    year: Optional[int] = None
+    rating: Optional[float] = None
+    slug: Optional[str] = None
+
 
 class ChapterBase(SQLModel):
     title: str
@@ -74,6 +95,8 @@ class ChapterBase(SQLModel):
     images: str = "[]"  # JSON formatında resim yolları veya base64 kodları
 
 class Chapter(ChapterBase, table=True):
+    __tablename__ = "chapter"
+    __table_args__ = (UniqueConstraint('manga_id', 'chapter_number', name='uq_manga_chapter'),)
     id: int = Field(default=None, primary_key=True)
     manga: Manga = Relationship(back_populates="chapters")
 
@@ -103,6 +126,13 @@ class ChapterReadWithoutImages(SQLModel):
     title: str
     chapter_number: int
     manga_id: int
+    release_date: Optional[datetime] = None
+    is_public: bool
+
+class ChapterReadWithoutImagesStr(SQLModel):
+    title: str
+    chapter_number: int
+    slug: str
     release_date: Optional[datetime] = None
     is_public: bool
 

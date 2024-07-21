@@ -28,4 +28,4 @@ egg-info/
 *.pyd
 
 # Miscellaneous
-.DS_Store
+.DS_Store__pycache__/
